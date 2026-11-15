@@ -11,7 +11,7 @@ int main() {
         const uint64_t pair = 3818ull * 1600 * 20; // Reported resolution's texel payload; production queries native heap sizes.
         const SceneMemoryBudget roomy{8ull * 1024 * SceneMiB, 3ull * 1024 * SceneMiB, true};
         const auto limit = ScenePoolByteLimit(true, pair, roomy);
-        Check(limit >= pair * 8, "Reported resolution cannot support eight active images");
+        Check(limit >= pair * 32, "Reported resolution cannot support eight active images");
         std::array<SceneInputOwnership, 8> images;
         std::array<int, 9> recordings{};
         uint64_t used = 0;
@@ -22,7 +22,7 @@ int main() {
             images[i].Acquire(&recordings[i], &recordings[i]);
             used += pair;
         }
-        Check(SceneAllocationRejection(true, 8, used, pair, limit, roomy) != nullptr, "Ninth active image exceeds count bound");
+        Check(SceneAllocationRejection(true, 32, used, pair, limit, roomy) != nullptr, "33th active image exceeds count bound");
         for (const auto& image : images)
             Check(!image.CanAcquire(&recordings[8]), "Ninth recording stole a live image");
         images[3].Retire(&recordings[3], true, {});

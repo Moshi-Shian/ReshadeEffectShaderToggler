@@ -1,5 +1,6 @@
 #include "DeviceStub.h"
 #include "GlobalResourceView.h"
+#include "D3D9StateSnapshot.h"
 #include <d3d9.h>
 #include <wrl/client.h>
 #include <cstdio>
@@ -79,6 +80,68 @@ int main() {
             return 77;
         }
         SurfaceHost host;
+        {
+            ComPtr<IDirect3DSurface9> gameTarget, gameDepth, privateTarget, secondTarget;
+            Hr(native->GetRenderTarget(0, &gameTarget));
+            D3DCAPS9 caps{}; Hr(native->GetDeviceCaps(&caps));
+            if (caps.NumSimultaneousRTs > 1) {
+                D3DSURFACE_DESC targetDesc{}; Hr(gameTarget->GetDesc(&targetDesc));
+                Hr(native->CreateRenderTarget(128, 128, targetDesc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &secondTarget, nullptr));
+            }
+            Hr(native->CreateDepthStencilSurface(128, 128, D3DFMT_D16, D3DMULTISAMPLE_NONE, 0, TRUE, &gameDepth, nullptr));
+            Hr(native->CreateRenderTarget(128, 128, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &privateTarget, nullptr));
+            Hr(native->SetDepthStencilSurface(gameDepth.Get()));
+            ComPtr<IDirect3DStateBlock9> oldRestore;
+            Hr(native->CreateStateBlock(D3DSBT_ALL, &oldRestore));
+            Hr(oldRestore->Capture());
+            Hr(native->SetDepthStencilSurface(nullptr));
+            Hr(native->SetRenderTarget(0, privateTarget.Get()));
+            // Reproduce the old path after event history lost the depth binding.
+            Hr(native->SetRenderTarget(0, gameTarget.Get()));
+            Hr(oldRestore->Apply());
+            ComPtr<IDirect3DSurface9> observed;
+            Check(native->GetDepthStencilSurface(&observed) == D3DERR_NOTFOUND && !observed,
+                  "Control case did not reproduce depth loss with a state block alone");
+            oldRestore.Reset();
+            for (unsigned mode = 0; mode < 2; ++mode) {
+                Hr(native->SetDepthStencilSurface(mode == 0 ? gameDepth.Get() : nullptr));
+                if (secondTarget) Hr(native->SetRenderTarget(1, secondTarget.Get()));
+                D3DVIEWPORT9 expected{4, 5, 96, 80, 0.1f, 0.9f};
+                RECT scissor{2, 3, 100, 99};
+                Hr(native->SetViewport(&expected)); Hr(native->SetScissorRect(&scissor));
+                Rendering::D3D9StateSnapshot snapshot;
+                Check(snapshot.Capture(native.Get()), "Native state snapshot failed");
+                Check(!snapshot.Capture(native.Get()), "Nested capture overwrote an outer snapshot");
+                Hr(native->SetDepthStencilSurface(nullptr));
+                Hr(native->SetRenderTarget(0, privateTarget.Get()));
+                if (secondTarget) Hr(native->SetRenderTarget(1, nullptr));
+                D3DVIEWPORT9 changed{0, 0, 64, 64, 0.0f, 1.0f};
+                Hr(native->SetViewport(&changed));
+                Check(snapshot.Restore(native.Get()), "Native state restore failed");
+                ComPtr<IDirect3DSurface9> target, depth;
+                Hr(native->GetRenderTarget(0, &target));
+                Check(target.Get() == gameTarget.Get(), "Original render target was not restored");
+                if (secondTarget) {
+                    ComPtr<IDirect3DSurface9> second;
+                    Hr(native->GetRenderTarget(1, &second));
+                    Check(second.Get() == secondTarget.Get(), "Additional render target was not restored");
+                }
+                const auto depthResult = native->GetDepthStencilSurface(&depth);
+                Check(mode == 0 ? SUCCEEDED(depthResult) && depth.Get() == gameDepth.Get() :
+                      depthResult == D3DERR_NOTFOUND && !depth, "Original depth presence/absence was not restored");
+                D3DVIEWPORT9 actual{}; RECT actualScissor{};
+                Hr(native->GetViewport(&actual)); Hr(native->GetScissorRect(&actualScissor));
+                Check(actual.X == expected.X && actual.Y == expected.Y && actual.Width == expected.Width &&
+                      actual.Height == expected.Height && actual.MinZ == expected.MinZ && actual.MaxZ == expected.MaxZ,
+                      "Viewport changed during target restoration");
+                Check(EqualRect(&actualScissor, &scissor), "Scissor state was not restored");
+                Check(!snapshot.Restore(native.Get()), "Consumed snapshot was reused");
+            }
+            Hr(native->SetDepthStencilSurface(nullptr));
+            if (secondTarget) Hr(native->SetRenderTarget(1, nullptr));
+            std::puts("REPRODUCED depth loss with old restoration; native snapshot restores target, depth/null, viewport and scissor.");
+        }
+        Hr(native->Reset(&present)); // Snapshot must not retain default-pool references.
         for (unsigned iteration = 0; iteration < 12; ++iteration) {
             ComPtr<IDirect3DSurface9> surface, readback;
             Hr(native->CreateRenderTarget(64, 64, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &surface, nullptr));

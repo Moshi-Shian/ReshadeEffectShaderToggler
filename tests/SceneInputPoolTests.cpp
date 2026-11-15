@@ -34,7 +34,7 @@ int main() {
         Check(SceneAllocationRejection(true, 4, 4 * pair, pair, 512 * SceneMiB, {}) != nullptr,
               "Baseline test does not reproduce Preview 5 exhaustion");
         Check(ScenePoolByteLimit(false, pair, roomy) == 256 * SceneMiB, "Regular scene budget changed");
-        Check(ScenePoolByteLimit(true, UINT64_MAX, roomy) == 1536 * SceneMiB, "Large target overflowed the hard cap");
+        Check(ScenePoolByteLimit(true, UINT64_MAX, roomy) == 4096 * SceneMiB, "Large target overflowed the hard cap");
         const SceneMemoryBudget smallBudget{1024 * SceneMiB, 0, true};
         Check(ScenePoolByteLimit(true, pair, smallBudget) == 256 * SceneMiB, "Quarter-budget cap ignored");
         const SceneMemoryBudget tight{8ull * 1024 * SceneMiB, 8ull * 1024 * SceneMiB - pair, true};

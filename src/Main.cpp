@@ -749,7 +749,7 @@ static void displaySettings(effect_runtime* runtime) {
 }
 
 static void Init() {
-    reshade::log::message(reshade::log::level::info, "Scene input preview 6 (pre-release): Warframe compositor split with budget-aware active recording capacity.");
+    reshade::log::message(reshade::log::level::info, "Shian Scene input preview 1: Warframe compositor split with budget-aware active recording capacity.");
     resourceManager.SetResourceShim(g_addonUIData.GetResourceShim());
     resourceManager.Init();
     constantManager.Init(g_addonUIData, groupResourceManager, &constantCopy, &constantHandler);

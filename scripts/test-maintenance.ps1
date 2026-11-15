@@ -16,7 +16,7 @@ foreach ($arch in @('x64', 'x86')) {
     if ($compilerVersion.Major -eq 14 -and $compilerVersion.Minor -lt 30) {
         Write-Output 'Group lifecycle and hunting log tests require VS2022; hosted CI runs it without compatibility substitutions.'
     } else {
-        cl /nologo /EHsc /std:c++20 /W3 /DWIN32 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DIMGUI_DISABLE_INCLUDE_IMCONFIG_H '/DImTextureID=unsigned long long' /Isrc /Ideps/reshade/include /Ideps/reshade/deps/imgui /Ideps/robin-map/include tests/HuntingLogTests.cpp src/ShaderManager.cpp /Fo"$out/" /Fe"$out/hunting-log.exe" /link user32.lib
+        cl /nologo /EHsc /std:c++20 /W3 /DWIN32 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DIMGUI_DISABLE_INCLUDE_IMCONFIG_H '/DImTextureID=unsigned long long' /Isrc /Ideps/reshade/include /Ideps/reshade/deps/imgui /Ideps/robin-map/include /FILegacyCompat.h tests/HuntingLogTests.cpp src/ShaderManager.cpp /Fo"$out/" /Fe"$out/hunting-log.exe" /link user32.lib
         if ($LASTEXITCODE -ne 0) { throw 'Hunting log regression failed to compile.' }
         & "$out/hunting-log.exe"
         if ($LASTEXITCODE -ne 0) { throw 'Hunting log regression failed.' }

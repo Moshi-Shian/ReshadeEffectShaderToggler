@@ -19,7 +19,7 @@ inline uint64_t ScenePoolByteLimit(bool split, uint64_t imageBytes, const SceneM
         const auto target = std::min(imageBytes, 8192 * SceneMiB / SceneSplitImageLimit) * SceneSplitImageLimit;
         limit = std::min(8192 * SceneMiB, std::max(limit, target));
     }
-    return memory.known ? std::min(limit, memory.budget / 4) : limit;
+    return memory.known ? std::min(limit, memory.budget / 2) : limit;
 }
 inline const char* SceneAllocationRejection(bool split, size_t images, uint64_t used, uint64_t requested,
                                            uint64_t limit, const SceneMemoryBudget& memory) {

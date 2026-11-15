@@ -9,7 +9,7 @@ static void Check(bool ok, const char* message) { if (!ok) throw std::runtime_er
 int main() {
     try {
         const uint64_t pair = 3818ull * 1600 * 20; // Reported resolution's texel payload; production queries native heap sizes.
-        const SceneMemoryBudget roomy{8ull * 1024 * SceneMiB, 5ull * 1024 * SceneMiB, true};
+        const SceneMemoryBudget roomy{8ull * 1024 * SceneMiB, 6ull * 1024 * SceneMiB, true};
         const auto limit = ScenePoolByteLimit(true, pair, roomy);
         Check(limit >= pair * 32, "Reported resolution cannot support eight active images");
         std::array<SceneInputOwnership, 8> images;

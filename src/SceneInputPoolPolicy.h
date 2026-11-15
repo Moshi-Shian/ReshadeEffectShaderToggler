@@ -5,7 +5,7 @@
 
 namespace Rendering {
 constexpr uint64_t SceneMiB = 1024ull * 1024;
-constexpr size_t SceneSplitImageLimit = 8;
+constexpr size_t SceneSplitImageLimit = 32; // Changed from 8
 
 struct SceneMemoryBudget {
     uint64_t budget = 0, usage = 0;

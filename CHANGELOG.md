@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7.4.680 — release candidate
+
+- Adapt D3D9 standalone-surface targets and pre-Reset cleanup from BadassBaboon/CrazyDaifu.
+- Release views before resources, make cleanup repeat-safe, and isolate typed view caches by device.
+- Preserve shared device resources until the last runtime is removed; choose same-device runtime replacements.
+- Retain removed group objects for stale queues and publish retirement before GPU cleanup.
+- Evaluate PS/VS/CS effect queues independently.
+- Add x86/x64 production lifecycle and native D3D9 reset regressions, attribution and a release-validation record.
+- Keep Warframe/scene-input processing separate; no issue #22 resolution is claimed. Game-level validation remains pending.
+
+
 ## v1.7.3.680 — 2026-10-19
 
 - Add a documentation index and installation, troubleshooting and local-build guides.

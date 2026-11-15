@@ -30,3 +30,8 @@ cl /nologo /EHsc /std:c++20 /W4 /WX /DNOMINMAX /Isrc tests/SceneInputPoolTests.c
 if ($LASTEXITCODE -ne 0) { throw 'Scene-input pool tests failed to compile.' }
 & ./tests/out/scene-input-pool.exe
 if ($LASTEXITCODE -ne 0) { throw 'Scene-input pool regression.' }
+
+cl /nologo /EHsc /std:c++20 /W4 /WX /DNOMINMAX /Isrc tests/SceneInputLifecycleTests.cpp /Fotests/out/sdk/ /Fetests/out/scene-input-lifecycle.exe
+if ($LASTEXITCODE -ne 0) { throw 'Scene-input lifecycle tests failed to compile.' }
+& ./tests/out/scene-input-lifecycle.exe
+if ($LASTEXITCODE -ne 0) { throw 'Scene-input lifecycle regression.' }

@@ -1,5 +1,7 @@
 # REST Enhanced Scene input preview 6
 
+**Follow-up:** The reporter confirmed much less flicker but still exhausted eight active pairs at 4K. The [local lifetime investigation](scene-input-lifetime-investigation.md) reproduces this with the GPU idle. Preview 6 remains experimental; another pool expansion is not the planned remedy.
+
 Preview 5's test results confirmed correct scene tint and technique colours, but flicker remained in No TAA, TAA, DLSS and FSR. During the DLSS failure, all four private image pairs were held by active command recordings. GPU handoffs were functioning; waiting for retired recordings alone could not provide another image.
 
 ## Changes and memory cost

@@ -14,8 +14,12 @@ foreach ($arch in @('x64', 'x86')) {
     elseif ($LASTEXITCODE -ne 0) { throw 'Native D3D9 reset regression or required coverage unavailable.' }
     $compilerVersion = [version](Get-Item (Get-Command cl.exe).Source).VersionInfo.ProductVersion
     if ($compilerVersion.Major -eq 14 -and $compilerVersion.Minor -lt 30) {
-        Write-Output 'Group lifecycle test requires VS2022; hosted CI runs it without compatibility substitutions.'
+        Write-Output 'Group lifecycle and hunting log tests require VS2022; hosted CI runs it without compatibility substitutions.'
     } else {
+        cl /nologo /EHsc /std:c++20 /W3 /DWIN32 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DIMGUI_DISABLE_INCLUDE_IMCONFIG_H '/DImTextureID=unsigned long long' /Isrc /Ideps/reshade/include /Ideps/reshade/deps/imgui /Ideps/robin-map/include tests/HuntingLogTests.cpp src/ShaderManager.cpp /Fo"$out/" /Fe"$out/hunting-log.exe" /link user32.lib
+        if ($LASTEXITCODE -ne 0) { throw 'Hunting log regression failed to compile.' }
+        & "$out/hunting-log.exe"
+        if ($LASTEXITCODE -ne 0) { throw 'Hunting log regression failed.' }
         cl /nologo /EHsc /std:c++20 /W3 /Gy /DWIN32 /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DIMGUI_DISABLE_INCLUDE_IMCONFIG_H '/DImTextureID=unsigned long long' /Isrc /Itests /Ideps/reshade/include /Ideps/reshade/deps/imgui tests/MaintenanceLifecycleTests.cpp src/GlobalResourceView.cpp src/ToggleGroup.cpp src/CDataFile.cpp /Fo"$out/" /Fe"$out/lifecycle.exe" /link /OPT:REF
         if ($LASTEXITCODE -ne 0) { throw 'Production lifecycle tests failed to compile.' }
         & "$out/lifecycle.exe"

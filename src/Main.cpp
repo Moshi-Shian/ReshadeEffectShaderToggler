@@ -78,9 +78,9 @@ constexpr auto REST_VAR_ANNOTATION = "source";
 static filesystem::path g_dllPath;
 static filesystem::path g_basePath;
 
-static ShaderToggler::ShaderManager g_pixelShaderManager;
-static ShaderToggler::ShaderManager g_vertexShaderManager;
-static ShaderToggler::ShaderManager g_computeShaderManager;
+static ShaderToggler::ShaderManager g_pixelShaderManager("PS");
+static ShaderToggler::ShaderManager g_vertexShaderManager("VS");
+static ShaderToggler::ShaderManager g_computeShaderManager("CS");
 
 static ConstantManager constantManager;
 static ConstantHandlerBase* constantHandler = nullptr;
@@ -118,6 +118,8 @@ static uint32_t calculateShaderHash(void* shaderData) {
 }
 
 static void onInitDevice(device* device) {
+    if (device->get_api() == device_api::d3d9)
+        reshade::log::message(reshade::log::level::info, "D3D9 copy/preview state: native target and depth snapshots enabled.");
     device->create_private_data<DeviceDataContainer>();
 }
 

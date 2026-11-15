@@ -25,3 +25,8 @@ cl /nologo /EHsc /std:c++20 /W4 /WX /DNOMINMAX /Isrc tests/SceneInputReuseTests.
 if ($LASTEXITCODE -ne 0) { throw 'Scene-input GPU reuse tests failed to compile.' }
 & ./tests/out/scene-input-reuse.exe
 if ($LASTEXITCODE -ne 0) { throw 'Scene-input GPU reuse regression.' }
+
+cl /nologo /EHsc /std:c++20 /W4 /WX /DNOMINMAX /Isrc tests/SceneInputPoolTests.cpp /Fotests/out/sdk/ /Fetests/out/scene-input-pool.exe
+if ($LASTEXITCODE -ne 0) { throw 'Scene-input pool tests failed to compile.' }
+& ./tests/out/scene-input-pool.exe
+if ($LASTEXITCODE -ne 0) { throw 'Scene-input pool regression.' }

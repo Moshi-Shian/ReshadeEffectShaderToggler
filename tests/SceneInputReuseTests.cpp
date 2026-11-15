@@ -1,4 +1,5 @@
 #include "SceneInputSync.h"
+#include "SceneInputPoolPolicy.h"
 #include <d3d12sdklayers.h>
 #include <dxgi1_4.h>
 #include <d3dcompiler.h>
@@ -82,6 +83,93 @@ int main() {
             Hr(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr, IID_PPV_ARGS(&resource)));
             return resource;
         };
+        {
+            // Keep every recording live through both execution and resubmission.
+            // Preview 5's four images cannot accommodate this recording depth.
+            struct Active {
+                SceneInputOwnership lifetime;
+                ComPtr<ID3D12Resource> scratch, input, output;
+                ComPtr<ID3D12CommandAllocator> allocator;
+                ComPtr<ID3D12GraphicsCommandList> commands;
+            };
+            std::array<Active, SceneSplitImageLimit> active;
+            D3D12_DESCRIPTOR_HEAP_DESC activeHeapDesc{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                static_cast<UINT>(2 * active.size()), D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+            ComPtr<ID3D12DescriptorHeap> heap;
+            Hr(device->CreateDescriptorHeap(&activeHeapDesc, IID_PPV_ARGS(&heap)));
+            const auto stride = device->GetDescriptorHandleIncrementSize(activeHeapDesc.Type);
+            for (size_t i = 0; i < active.size(); ++i) {
+                auto& a = active[i];
+                for (size_t j = 0; j < i; ++j)
+                    Check(!active[j].lifetime.CanAcquire(&a), "Concurrent recording stole an image");
+                a.lifetime.Acquire(&a, &a);
+                a.scratch = buffer(D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                a.input = buffer(D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+                a.output = buffer(D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+                void* mapped = nullptr;
+                D3D12_RANGE unread{};
+                Hr(a.input->Map(0, &unread, &mapped));
+                *static_cast<UINT64*>(mapped) = 700 + i;
+                a.input->Unmap(0, nullptr);
+                const auto cpu = heap->GetCPUDescriptorHandleForHeapStart().ptr + 2 * i * stride;
+                D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+                srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+                srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                srv.Buffer.NumElements = 64;
+                srv.Buffer.StructureByteStride = 4;
+                device->CreateShaderResourceView(a.input.Get(), &srv, {cpu});
+                D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+                uav.Format = DXGI_FORMAT_R32_TYPELESS;
+                uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+                uav.Buffer.NumElements = 64;
+                uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+                device->CreateUnorderedAccessView(a.scratch.Get(), nullptr, &uav, {cpu + stride});
+                Hr(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&a.allocator)));
+                Hr(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a.allocator.Get(), nullptr, IID_PPV_ARGS(&a.commands)));
+                ID3D12DescriptorHeap* heaps[]{heap.Get()};
+                a.commands->SetDescriptorHeaps(1, heaps);
+                a.commands->SetComputeRootSignature(root.Get());
+                a.commands->SetComputeRootDescriptorTable(0, {heap->GetGPUDescriptorHandleForHeapStart().ptr + 2 * i * stride});
+                a.commands->SetPipelineState(pipeline.Get());
+                a.commands->Dispatch(1, 1, 1);
+                D3D12_RESOURCE_BARRIER barrier{};
+                barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                barrier.Transition = {a.scratch.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE};
+                a.commands->ResourceBarrier(1, &barrier);
+                a.commands->CopyBufferRegion(a.output.Get(), 0, a.scratch.Get(), 0, sizeof(UINT64));
+                std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+                a.commands->ResourceBarrier(1, &barrier);
+                Hr(a.commands->Close());
+            }
+            for (size_t i = active.size(); i-- > 0;) {
+                ID3D12CommandList* commands[]{active[i].commands.Get()};
+                queues[1]->ExecuteCommandLists(1, commands);
+            }
+            auto& completion = completions[1];
+            Hr(queues[1]->Signal(completion->fence.Get(), ++completion->value));
+            Hr(completion->fence->SetEventOnCompletion(completion->value, nullptr));
+            for (auto& a : active) {
+                ID3D12CommandList* commands[]{a.commands.Get()};
+                queues[1]->ExecuteCommandLists(1, commands); // Recording remains valid for resubmission.
+            }
+            const auto value = ++completion->value;
+            Hr(queues[1]->Signal(completion->fence.Get(), value));
+            Hr(completion->fence->SetEventOnCompletion(value, nullptr));
+            int ninth = 0;
+            for (size_t i = 0; i < active.size(); ++i) {
+                auto& a = active[i];
+                Check(!a.lifetime.CanAcquire(&ninth), "GPU completion prematurely released a live recording");
+                void* mapped = nullptr;
+                Hr(a.output->Map(0, nullptr, &mapped));
+                Check(*static_cast<const UINT64*>(mapped) == 700 + i, "Concurrent recording output changed");
+                D3D12_RANGE unmodified{};
+                a.output->Unmap(0, &unmodified);
+                a.lifetime.Retire(&a, true, {{completion, value}});
+                Check(a.lifetime.CanAcquire(&ninth), "Retired active image cannot be reused");
+            }
+            std::puts("Eight live GPU recordings executed in reverse order and resubmitted with exact independent outputs.");
+        }
         auto shared = buffer(D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         SceneInputOwnership lifetime;
         struct Recording {

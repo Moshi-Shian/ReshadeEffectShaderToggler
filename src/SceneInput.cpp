@@ -5,15 +5,19 @@
 #include "StateTracking.h"
 #include "WarframeCompositor.h"
 #include "SceneInputSync.h"
+#include "SceneInputPoolPolicy.h"
 #include <reshade.hpp>
 #include <algorithm>
 #include <d3d12.h>
+#include <dxgi1_4.h>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <wrl/client.h>
 
 using namespace reshade::api;
 using Microsoft::WRL::ComPtr;
+#pragma comment(lib, "dxgi.lib")
 
 namespace Rendering {
 void RefreshSceneInputDescriptors(command_list* cmd) {
@@ -93,7 +97,39 @@ class SceneInputPool {
     std::unordered_map<command_queue*, std::shared_ptr<SceneFence>> fences;
     uint64_t bytes = 0;
     uint64_t imageReuses = 0, gpuHandoffs = 0, pressureSkips = 0;
+    std::string lastPressure;
+    ComPtr<IDXGIAdapter3> adapter;
+    bool adapterChecked = false;
+    SceneMemoryBudget memory;
+    uint64_t observedBytes = 0;
+    std::chrono::steady_clock::time_point memoryChecked{};
     bool waitFailed = false;
+    SceneMemoryBudget Memory(device* dev) {
+        if (!adapterChecked) {
+            ComPtr<IDXGIFactory4> factory;
+            auto* native = reinterpret_cast<ID3D12Device*>(dev->get_native());
+            if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+                factory->EnumAdapterByLuid(native->GetAdapterLuid(), IID_PPV_ARGS(&adapter));
+            adapterChecked = true;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - memoryChecked >= std::chrono::milliseconds(250)) {
+            DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+            memory = {};
+            if (adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info)))
+                memory = {info.Budget, info.CurrentUsage, true};
+            observedBytes = bytes;
+            memoryChecked = now;
+        }
+        auto result = memory;
+        // Cached process usage predates our intervening allocations. Account
+        // for those locally; do not assume a released heap is already evicted.
+        if (result.known && bytes > observedBytes) {
+            const auto added = bytes - observedBytes;
+            result.usage = result.usage > UINT64_MAX - added ? UINT64_MAX : result.usage + added;
+        }
+        return result;
+    }
     static bool Complete(const Entry& entry) {
         if (!entry.retired || !entry.reusable)
             return false;
@@ -102,6 +138,61 @@ class SceneInputPool {
 };
 
 namespace {
+uint64_t SceneImageBytes(device* dev, uint32_t width, uint32_t height, format pixelFormat, bool split) {
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = desc.MipLevels = 1;
+    desc.Format = static_cast<DXGI_FORMAT>(pixelFormat);
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    auto* native = reinterpret_cast<ID3D12Device*>(dev->get_native());
+    auto bytes = native->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
+    if (!bytes || bytes == UINT64_MAX) return 0;
+    if (split) {
+        desc.Format = DXGI_FORMAT_R32_FLOAT;
+        const auto alphaBytes = native->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
+        if (!alphaBytes || alphaBytes == UINT64_MAX || bytes > UINT64_MAX - alphaBytes) return 0;
+        bytes += alphaBytes;
+    }
+    return bytes;
+}
+
+SceneImageAvailability ImageAvailability(const SceneInputStorage& image, command_list* cmd,
+                                         uint32_t width, uint32_t height, format pixelFormat, bool split) {
+    const bool compatible = image.width == width && image.height == height && image.pixelFormat == pixelFormat &&
+                            (image.alpha != 0) == split;
+    return ClassifySceneImage(compatible, image.lifetime.reusable, image.lifetime.owner != nullptr,
+                              image.lifetime.recording == cmd);
+}
+
+void RecordPoolPressure(SceneInputPool& pool, command_list* cmd, uint32_t width, uint32_t height,
+                        format pixelFormat, bool split, const char* reason, uint64_t requested,
+                        uint64_t limit, const SceneMemoryBudget& memory) {
+    ++pool.pressureSkips;
+    size_t available = 0, active = 0, incompatible = 0, unsafe = 0;
+    for (const auto& image : pool.images) {
+        switch (ImageAvailability(*image, cmd, width, height, pixelFormat, split)) {
+        case SceneImageAvailability::available: ++available; break;
+        case SceneImageAvailability::active: ++active; break;
+        case SceneImageAvailability::incompatible: ++incompatible; break;
+        case SceneImageAvailability::unsafe: ++unsafe; break;
+        }
+    }
+    // Capture at the failed attempt. The pool may have changed by the time
+    // the overlay's Copy diagnostics button is clicked on another thread.
+    pool.lastPressure = std::string("Last pool skip #") + std::to_string(pool.pressureSkips) + ": " + reason +
+        " | request " + std::to_string(width) + "x" + std::to_string(height) + " format " +
+        std::to_string(static_cast<uint32_t>(pixelFormat)) + " split " + std::to_string(split) +
+        " | available " + std::to_string(available) + " | compatible active " + std::to_string(active) +
+        " | incompatible " + std::to_string(incompatible) + " | unsafe " + std::to_string(unsafe) +
+        " | pool/request/limit MiB " + std::to_string(pool.bytes / SceneMiB) + "/" +
+        std::to_string(requested / SceneMiB) + "/" + std::to_string(limit / SceneMiB) +
+        " | GPU budget/usage MiB " + (memory.known ? std::to_string(memory.budget / SceneMiB) + "/" +
+        std::to_string(memory.usage / SceneMiB) : "unavailable") + "\n";
+}
+
 struct PixelBinding {
     uint32_t slot, offset;
 };
@@ -352,30 +443,47 @@ std::shared_ptr<SceneInputLease> PrepareSceneInput(command_list* cmd, uint32_t s
         return {};
     }
     std::shared_ptr<SceneInputStorage> image;
+    // Prefer an image this recording already owns, even when an earlier pool
+    // entry has become idle. Sequential draws do not need a second image pair.
     for (auto& candidate : pool.images) {
-        if (candidate->lifetime.CanAcquire(cmd) && candidate->width == desc.texture.width &&
-            candidate->height == desc.texture.height && candidate->pixelFormat == targetFormat &&
-            (candidate->alpha != 0) == static_cast<bool>(split)) {
-            image = candidate;
-            break;
+        if (ImageAvailability(*candidate, cmd, desc.texture.width, desc.texture.height, targetFormat,
+                              static_cast<bool>(split)) == SceneImageAvailability::available) {
+            if (!image || candidate->lifetime.recording == cmd)
+                image = candidate;
+            if (candidate->lifetime.recording == cmd)
+                break;
         }
     }
     if (!image) {
-        const uint64_t bytes = static_cast<uint64_t>(desc.texture.width) * desc.texture.height *
-                               (split ? 20 : targetFormat == format::r16g16b16a16_float ? 8 : 4);
-        const uint64_t budget = (split ? 512ull : 256ull) * 1024 * 1024;
+        uint64_t bytes = 0;
+        for (const auto& candidate : pool.images)
+            if (ImageAvailability(*candidate, cmd, desc.texture.width, desc.texture.height, targetFormat,
+                                  static_cast<bool>(split)) != SceneImageAvailability::incompatible) {
+                bytes = candidate->bytes;
+                break;
+            }
+        if (!bytes)
+            bytes = SceneImageBytes(dev, desc.texture.width, desc.texture.height, targetFormat, static_cast<bool>(split));
+        if (!bytes) {
+            status = "Scene input: private image allocation size unavailable";
+            return {};
+        }
+        const auto memory = pool.Memory(dev);
+        const auto budget = ScenePoolByteLimit(static_cast<bool>(split), bytes, memory);
         for (auto it = pool.images.begin(); it != pool.images.end();) {
             const auto& candidate = *it;
-            if (pool.bytes + bytes > budget && candidate.use_count() == 1 && candidate->lifetime.owner == nullptr &&
+            if ((bytes > budget || pool.bytes > budget - bytes || (split && pool.images.size() >= SceneSplitImageLimit)) &&
+                candidate.use_count() == 1 && candidate->lifetime.owner == nullptr &&
                 SceneTicketsComplete(candidate->lifetime.dependencies)) {
                 pool.bytes -= candidate->bytes;
                 it = pool.images.erase(it);
             } else
                 ++it;
         }
-        if (bytes > budget || pool.bytes + bytes > budget) {
-            ++pool.pressureSkips;
-            status = "Scene input: waiting for private GPU resources";
+        if (const auto* reason = SceneAllocationRejection(static_cast<bool>(split), pool.images.size(), pool.bytes, bytes, budget, memory)) {
+            RecordPoolPressure(pool, cmd, desc.texture.width, desc.texture.height, targetFormat,
+                               static_cast<bool>(split), reason, bytes, budget, memory);
+            status = reason;
             return {};
         }
         image = std::make_shared<SceneInputStorage>();
@@ -689,7 +797,7 @@ std::string SceneInputPoolDiagnostics(device* dev) {
            " | retained descriptor sets " + std::to_string(pool->entries.size()) + " | retired sets " +
            std::to_string(retained) + "\nImage reuses: " + std::to_string(pool->imageReuses) +
            " | GPU handoffs: " + std::to_string(pool->gpuHandoffs) +
-           " | pool pressure skips: " + std::to_string(pool->pressureSkips) + "\n";
+           " | pool pressure skips: " + std::to_string(pool->pressureSkips) + "\n" + pool->lastPressure;
 }
 
 void DisposeSceneInputs(device* dev) {

@@ -187,6 +187,7 @@
   <ItemGroup>
     <ClInclude Include="SceneInput.h" />
     <ClInclude Include="SceneInputSync.h" />
+    <ClInclude Include="SceneInputPoolPolicy.h" />
     <ClInclude Include="WarframeCompositor.h" />
     <ClInclude Include="WarframeShaders.h" />
     <ClInclude Include="SceneInputAllocation.h" />

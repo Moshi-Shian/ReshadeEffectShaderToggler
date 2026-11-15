@@ -749,7 +749,7 @@ static void displaySettings(effect_runtime* runtime) {
 }
 
 static void Init() {
-    reshade::log::message(reshade::log::level::info, "Scene input preview 5 (pre-release): Warframe compositor split with GPU-ordered scratch reuse.");
+    reshade::log::message(reshade::log::level::info, "Scene input preview 6 (pre-release): Warframe compositor split with budget-aware active recording capacity.");
     resourceManager.SetResourceShim(g_addonUIData.GetResourceShim());
     resourceManager.Init();
     constantManager.Init(g_addonUIData, groupResourceManager, &constantCopy, &constantHandler);

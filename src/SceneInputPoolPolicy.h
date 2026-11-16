@@ -14,7 +14,7 @@ struct SceneMemoryBudget {
 inline uint64_t ScenePoolByteLimit(bool split, uint64_t imageBytes, const SceneMemoryBudget& memory) {
     // Growth is specific to the opt-in full-precision compositor split. Never
     // infer available memory from the card's advertised/dedicated capacity.
-    uint64_t limit = (split ? 4096ull : 256ull) * SceneMiB;
+    uint64_t limit = (split ? (memory.known ? 4096ull : 512ull) : 256ull) * SceneMiB;
     if (split && memory.known) {
         const auto target = std::min(imageBytes, 8192 * SceneMiB / SceneSplitImageLimit) * SceneSplitImageLimit;
         limit = std::min(8192 * SceneMiB, std::max(limit, target));

@@ -36,7 +36,7 @@ int main() {
         Check(ScenePoolByteLimit(false, pair, roomy) == 256 * SceneMiB, "Regular scene budget changed");
         Check(ScenePoolByteLimit(true, UINT64_MAX, roomy) == 4096 * SceneMiB, "Large target overflowed the hard cap");
         const SceneMemoryBudget smallBudget{1024 * SceneMiB, 0, true};
-        Check(ScenePoolByteLimit(true, pair, smallBudget) == 256 * SceneMiB, "Quarter-budget cap ignored");
+        Check(ScenePoolByteLimit(true, pair, smallBudget) == 512 * SceneMiB, "Half-budget cap ignored");
         const SceneMemoryBudget tight{8ull * 1024 * SceneMiB, 8ull * 1024 * SceneMiB - pair, true};
         Check(SceneAllocationRejection(true, 4, 4 * pair, pair, limit, tight) != nullptr, "Half-headroom reserve ignored");
         const SceneMemoryBudget over{1024 * SceneMiB, 1024 * SceneMiB + 1, true};

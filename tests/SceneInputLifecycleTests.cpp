@@ -98,7 +98,7 @@ int main() {
         idle(); // The GPU is completely idle; none of these recordings was reset.
         for (size_t i = 0; i < images.size(); ++i) {
             verify(i);
-            Check(!images[i].ownership.CanAcquire(&recordings[8]), "Completion-only release escaped the ownership policy");
+            Check(!images[i].ownership.CanAcquire(&recordings[SceneSplitImageLimit]), "Completion-only release escaped the ownership policy");
         }
         const auto* rejection = SceneAllocationRejection(true, 8, 1275 * SceneMiB, 159 * SceneMiB,
             1536 * SceneMiB, {15339 * SceneMiB, 5054 * SceneMiB, true});

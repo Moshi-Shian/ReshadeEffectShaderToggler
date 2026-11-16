@@ -100,7 +100,7 @@ int main() {
             verify(i);
             Check(!images[i].ownership.CanAcquire(&recordings[SceneSplitImageLimit]), "Completion-only release escaped the ownership policy");
         }
-        const auto* rejection = SceneAllocationRejection(true, 8, 1275 * SceneMiB, 159 * SceneMiB,
+        const auto* rejection = SceneAllocationRejection(true, SceneSplitImageLimit, 1275 * SceneMiB, 159 * SceneMiB,
             1536 * SceneMiB, {15339 * SceneMiB, 5054 * SceneMiB, true});
         Check(rejection && std::string(rejection) == "Scene input: active image capacity reached", "Reporter exhaustion not reproduced");
         std::puts("REPRODUCED: GPU idle, eight valid closed recordings, ninth request rejected despite ample memory headroom.");
